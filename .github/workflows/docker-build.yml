@@ -1,0 +1,54 @@
+name: Lite-Redis CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build, Run & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Kodunu çek
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Docker imajını derle
+      - name: Build Docker Image
+        run: docker build -t lite-redis .
+
+      # 3. Boyut kontrolü (Loglarda hava atmak için)
+      - name: Check Image Size
+        run: docker images | grep lite-redis
+
+      # 4. Konteyneri arka planda başlat (Detach mode)
+      - name: Run Container
+        run: docker run -d -p 6379:6379 --name test-redis lite-redis
+
+      # 5. Sunucunun uyanması için 2 saniye bekle (Önemli!)
+      - name: Wait for Server
+        run: sleep 2
+
+      # 6. TEST ANI: PING at, PONG al
+      - name: Test Connection
+        run: |
+          # nc (netcat) ile bağlan, PING gönder.
+          # -q 1: Gönderdikten sonra 1 saniye bekle ve kapan.
+          response=$(echo "PING" | nc -q 1 localhost 6379)
+          
+          echo "Server Response: $response"
+          
+          if [[ "$response" == *"+PONG"* ]]; then
+            echo "✅ TEST PASSED: Server replied PONG!"
+          else
+            echo "❌ TEST FAILED: Server did not reply PONG."
+            exit 1
+          fi
+
+      # 7. Temizlik
+      - name: Cleanup
+        if: always()
+        run: docker rm -f test-redis
