@@ -1,9 +1,10 @@
 # Lite-Redis
 
-![CI Pipeline](https://github.com/ayzabar/lite-redis/actions/workflows/docker-build.yml/badge.svg)
-![Go Version](https://img.shields.io/badge/Go-1.24-blue)
-![Docker Size](https://img.shields.io/badge/image_size-5.04MB-success)
-![License](https://img.shields.io/badge/license-MIT-green)
+[![CI Pipeline](https://github.com/ayzabar/lite-redis/actions/workflows/docker-build.yml/badge.svg)](https://github.com/ayzabar/lite-redis/actions/workflows/docker-build.yml)
+![Go Version](https://img.shields.io/github/go-mod/go-version/ayzabar/lite-redis?label=Go&color=blue)
+![Docker Image Size](https://img.shields.io/badge/docker_image_size-5.04MB-success)
+![Repo Size](https://img.shields.io/github/repo-size/ayzabar/lite-redis)
+![License](https://img.shields.io/github/license/ayzabar/lite-redis)
 
 **Lite-Redis** is a lightweight, thread-safe, in-memory key-value store written in **Go** from scratch.
 
