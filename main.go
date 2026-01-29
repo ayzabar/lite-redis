@@ -4,7 +4,15 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
+	"sync"
 )
+
+// database, global variable
+var data = make(map[string]string)
+
+// lock. 100 can read but only one can write
+var mu sync.RWMutex
 
 func main() {
 	// Listen to TCP port (6379)
@@ -31,17 +39,59 @@ func main() {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	// we read and print to the screen
-	buf := make([]byte, 1024)
+	// we read and cast to string
+	buf := make([]byte, 1024) // 1KB buffer
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
 			return // disconnected
 		}
 		// cast the data to string and print it (data is from a slice, so it's type is byte.)
-		fmt.Println(string("Received: " + string(buf[:n])))
+		input := string(buf[:n])
 
-		// answer (function accepts bytes, so we need to convert string to bytes. and ofc CRLF for the protocol)
-		conn.Write([]byte("+PONG\r\n"))
+		// "SET name archura \r\n" -> ["SET", "name", "archura"] we don't use string.Split cuz that might give us ""s
+		parts := strings.Fields(input)
+		// prevent PANIC if \r\n entered
+		if len(parts) == 0 {
+			continue
+		}
+
+		command := strings.ToUpper(parts[0])
+		switch command {
+
+		case "PING":
+			conn.Write([]byte("+PONG\r\n"))
+
+		case "SET":
+			if len(parts) != 3 {
+				conn.Write([]byte("-ERR wrong number of arguments for 'set' command\r\n"))
+				continue
+			}
+			key, value := parts[1], parts[2]
+			// lock the mutex to ensure thread safety
+			mu.Lock()
+			data[key] = value
+			mu.Unlock() // we good
+			conn.Write([]byte("+OK\r\n"))
+
+		case "GET":
+			if len(parts) != 2 {
+				conn.Write([]byte("-ERR wrong number of arguments for 'get' command\r\n"))
+				continue
+			}
+			// other people can read but can't write
+			key := parts[1]
+			mu.RLock()
+			value, ok := data[key]
+			mu.RUnlock()
+			if !ok {
+				conn.Write([]byte("$-1\r\n")) // Null Bulk String $-1, redis client doesn't recognize it as an error
+			} else {
+				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)
+				conn.Write([]byte(resp))
+			}
+		default:
+			conn.Write([]byte("-ERR unknown command '" + command + "'\r\n"))
+		}
 	}
 }
