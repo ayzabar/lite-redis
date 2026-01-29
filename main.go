@@ -4,12 +4,19 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
-// database, global variable
-var data = make(map[string]string)
+type Item struct {
+	Value     string
+	ExpiresAt int64
+}
+
+// database, global variable holds the item
+var data = make(map[string]Item)
 
 // lock. 100 can read but only one can write
 var mu sync.RWMutex
@@ -17,6 +24,7 @@ var mu sync.RWMutex
 func main() {
 	// Listen to TCP port (6379)
 	listener, err := net.Listen("tcp", ":6379")
+	go startJanitor()
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379:", err)
 		os.Exit(1)
@@ -63,14 +71,29 @@ func handleConnection(conn net.Conn) {
 			conn.Write([]byte("+PONG\r\n"))
 
 		case "SET":
-			if len(parts) != 3 {
+			if len(parts) < 3 {
 				conn.Write([]byte("-ERR wrong number of arguments for 'set' command\r\n"))
 				continue
 			}
 			key, value := parts[1], parts[2]
+
+			var expiresAt int64 = 0
+
+			// expiration control
+			if len(parts) >= 5 && strings.ToUpper(parts[3]) == "EX" {
+				seconds, err := strconv.Atoi(parts[4])
+				if err == nil {
+					// time + x secs
+					expiresAt = time.Now().Add(time.Duration(seconds) * time.Second).UnixNano()
+				}
+			}
+
 			// lock the mutex to ensure thread safety
 			mu.Lock()
-			data[key] = value
+			data[key] = Item{
+				Value:     value,
+				ExpiresAt: expiresAt,
+			}
 			mu.Unlock() // we good
 			conn.Write([]byte("+OK\r\n"))
 
@@ -79,19 +102,49 @@ func handleConnection(conn net.Conn) {
 				conn.Write([]byte("-ERR wrong number of arguments for 'get' command\r\n"))
 				continue
 			}
-			// other people can read but can't write
 			key := parts[1]
-			mu.RLock()
-			value, ok := data[key]
-			mu.RUnlock()
+
+			// FIX: used Lock instead of RLock
+			// why? cuz we might delete during "Lazy Expiration"
+			mu.Lock()
+			item, ok := data[key]
+
 			if !ok {
-				conn.Write([]byte("$-1\r\n")) // Null Bulk String $-1, redis client doesn't recognize it as an error
-			} else {
-				resp := fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)
-				conn.Write([]byte(resp))
+				mu.Unlock()
+				conn.Write([]byte("$-1\r\n"))
+				continue
 			}
+
+			// lazy expiration check
+			if item.ExpiresAt > 0 && time.Now().UnixNano() > item.ExpiresAt {
+				delete(data, key)
+				mu.Unlock()
+				conn.Write([]byte("$-1\r\n"))
+				continue
+			}
+
+			mu.Unlock() // we good
+			resp := fmt.Sprintf("$%d\r\n%s\r\n", len(item.Value), item.Value)
+			conn.Write([]byte(resp))
+
 		default:
 			conn.Write([]byte("-ERR unknown command '" + command + "'\r\n"))
 		}
+	}
+}
+func startJanitor() {
+	for {
+		time.Sleep(1 * time.Second)
+
+		mu.Lock()
+
+		now := time.Now().UnixNano()
+		for key, item := range data {
+			if item.ExpiresAt > 0 && now > item.ExpiresAt {
+				delete(data, key)
+			}
+		}
+
+		mu.Unlock()
 	}
 }
